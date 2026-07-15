@@ -1,0 +1,71 @@
+Clawdmeter (fork) — License & Notices
+=====================================
+
+This project is a fork of "Clawdmeter" by Hermann Bjorgvin:
+    https://github.com/HermannBjorgvin/Clawdmeter
+
+IMPORTANT: Please read the THIRD-PARTY NOTICE below before redistributing.
+This repository bundles fonts and mascot artwork that are NOT ours to license,
+mirroring the upstream project. The upstream author deliberately did not apply
+a blanket open-source license for exactly this reason.
+
+
+-------------------------------------------------------------------------
+MIT License  (applies to the SOURCE CODE of this project only)
+-------------------------------------------------------------------------
+
+Copyright (c) 2025 Oleh (@iam.oleh) and Clawdmeter contributors
+Portions Copyright (c) Hermann Bjorgvin (original Clawdmeter project)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The MIT grant above covers the source code of this project. It does NOT apply
+to the third-party assets described below, which remain the property of their
+respective owners.
+
+
+-------------------------------------------------------------------------
+THIRD-PARTY NOTICE  (fonts, mascot, and marks — NOT MIT-licensed)
+-------------------------------------------------------------------------
+
+As the upstream Clawdmeter project notes, this repository includes proprietary
+and copyrighted assets that neither the upstream author nor this fork can
+relicense:
+
+  * Fonts — "Styrene B" and "Tiempos" are commercial typefaces associated with
+    Anthropic's brand. The original source font files are NOT included in this
+    repository. What remains are small compiled bitmap glyph subsets baked into
+    firmware/src/font_styrene_*.c and firmware/src/font_tiempos_*.c, present only
+    for personal, non-commercial interoperability with Claude Code and to let the
+    firmware build. They are NOT covered by the MIT license. To reuse this
+    project you should regenerate these fonts from a typeface you are licensed to
+    use (the free DejaVu Sans Mono in assets/ is one drop-in option).
+
+  * The "Clawd" mascot / Claude pixel artwork and animations
+    (firmware/src/logo.h, splash*.*, icons*.h, tools/claudepix_data/, and the
+    demo images under assets/ and screenshots/) are the property of
+    Anthropic PBC.
+
+  * "Claude", "Claude Code", and "Anthropic" are trademarks of Anthropic PBC.
+    This is an independent, unofficial hobby project and is not affiliated
+    with, endorsed by, or sponsored by Anthropic.
+
+If you intend to redistribute or sell a build of this project, you are
+responsible for ensuring you have the rights to any bundled fonts and artwork,
+or for replacing them with assets you are licensed to use.

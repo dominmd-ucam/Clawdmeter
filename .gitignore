@@ -1,0 +1,35 @@
+# PlatformIO build artifacts
+firmware/.pio/
+firmware/.vscode/
+*.bin
+*.elf
+*.uf2
+
+# Python
+daemon/.venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Backups & one-off artifacts
+*.bak
+*.bak.*
+*.done
+
+# Node tooling deps (tools/)
+tools/node_modules/
+tools/package-lock.json
+
+# Local env / secrets — this project needs no API keys; never commit tokens
+.env
+.env.local
+
+# Logs
+*.log
+*.out.log
+
+# OS / editor cruft
+.DS_Store
+.idea/
+.claude/
