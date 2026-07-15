@@ -1,8 +1,12 @@
-# Clawdmeter — a desk gadget for your Claude Code usage
+<p align="center">
+  <img src="images/logo.png" alt="clawdmeter plus" width="760">
+</p>
+
+# Clawdmeter Plus
 
 A tiny round AMOLED desk display that shows your live **Claude Code** usage, the
 time, the London weather, the health of your background agents, and an animated
-pixel mascot — and greets you out loud twice a day. It runs on a
+pixel mascot - and greets you out loud twice a day. It runs on a
 [Waveshare ESP32-S3-Touch-AMOLED-2.16](https://www.waveshare.com/esp32-s3-touch-amoled-2.16.htm?&aff_id=149786)
 and talks to a small macOS daemon over Bluetooth LE.
 
@@ -12,11 +16,12 @@ and talks to a small macOS daemon over Bluetooth LE.
 > endorsed by, or sponsored by Anthropic. See [Credits & License](#credits--license).
 
 <p align="center">
-  <img src="images/status.png" alt="Clawdmeter status screen: clock, London weather, tomorrow's forecast, and agent dots" width="360">
+  <img src="images/photo-usage.jpg" alt="Clawdmeter on a desk showing the usage screen" width="330">
+  <img src="images/photo-status.jpg" alt="Clawdmeter on a desk showing the status screen" width="330">
 </p>
 
-> Physical-device photos coming soon — the shots below are captured straight
-> off the panel's framebuffer.
+> The finished build on my desk. The crisp screenshots further down are captured
+> straight off the panel's framebuffer.
 
 ---
 
@@ -43,9 +48,9 @@ Your live Claude Code limits, straight from the Anthropic usage API:
 A bento-style dashboard:
 
 - **Clock** (12h/24h)
-- **London weather** — current temperature + a condition icon (open-meteo, no API key)
-- **Tomorrow** — tomorrow's forecast high + icon
-- **Agent dots** — five health dots for background Claude agents running in a local
+- **London weather** - current temperature + a condition icon (open-meteo, no API key)
+- **Tomorrow** - tomorrow's forecast high + icon
+- **Agent dots** - five health dots for background Claude agents running in a local
   `tmux` session, each with an identity icon. Whichever agent is *actively working*
   gets a **pulsing orange highlight** behind its cell.
 - The animated mascot, on this page too
@@ -57,7 +62,7 @@ A bento-style dashboard:
 
 The agent-dots panel is tailored to a specific multi-agent setup (it looks for
 named `tmux` windows). If you don't run agents that way the dots simply stay
-idle — everything else works unchanged. See [Customizing](#customizing).
+idle - everything else works unchanged. See [Customizing](#customizing).
 
 ### Controls
 
@@ -78,12 +83,12 @@ idle — everything else works unchanged. See [Customizing](#customizing).
 | **Onboard speaker** | The 2.16" board has an ES8311 codec + speaker, used for the session-reset chime and the [daily voice](#the-daily-voice). |
 | **USB-C data cable** | Needed to flash. Use a real **data** cable, not a charge-only one. |
 
-Other boards in the same family are also supported by the firmware — see
+Other boards in the same family are also supported by the firmware - see
 [Supported boards](#supported-boards).
 
 > On battery the device sleeps after a few minutes idle to save power and wakes
 > on a PWR press; on USB it stays always-on. A dark screen after a night on
-> battery is normal — just tap PWR.
+> battery is normal - just tap PWR.
 
 ---
 
@@ -92,7 +97,7 @@ Other boards in the same family are also supported by the firmware — see
 1. If you're adding a battery, plug the LiPo into the board's battery JST
    connector (check polarity), and seat it in the case.
 2. Connect the board to your Mac with a USB-C **data** cable.
-3. That's the whole build — flash the firmware, then run the daemon.
+3. That's the whole build - flash the firmware, then run the daemon.
 
 *(Enclosure/wiring photos will be added here.)*
 
@@ -123,7 +128,7 @@ pio run -e waveshare_amoled_216 -t upload
 ```
 
 If no `/dev/cu.usbmodem*` device is found, the cable is charge-only or the board
-needs download mode — hold **BOOT** while plugging in, then flash.
+needs download mode - hold **BOOT** while plugging in, then flash.
 
 Monitor serial output with:
 
@@ -141,7 +146,7 @@ pushes a compact JSON payload to the device over BLE every ~60 s.
 
 **It never stores a token in this repo.** On macOS it reads your Claude Code
 OAuth token from the login **Keychain** (service `Claude Code-credentials`) at
-runtime — the same credential Claude Code itself uses. You just need to be
+runtime - the same credential Claude Code itself uses. You just need to be
 signed in to Claude Code.
 
 **Install:**
@@ -162,9 +167,9 @@ This will:
 
 1. Power on the board.
 2. System Settings → **Bluetooth** → **Connect** next to **"Clawdmeter"**.
-3. macOS will ask to allow Bluetooth for the daemon — click **Allow**. (A
+3. macOS will ask to allow Bluetooth for the daemon - click **Allow**. (A
    "Keyboard Setup Assistant" window may pop up because the board also exposes
-   BLE HID keys — just close it; don't press any keys.)
+   BLE HID keys - just close it; don't press any keys.)
 
 The daemon discovers the paired device within ~30 s and starts sending.
 
@@ -203,10 +208,10 @@ needed):
 
 Copy [`daemon/config.example`](daemon/config.example) there to start. Keys:
 
-- `clock` — `off` / `auto` / `12` / `24` (show a clock on the usage screen)
-- `chime` — `on` / `off` (play a sound through the speaker when your 5-hour
+- `clock` - `off` / `auto` / `12` / `24` (show a clock on the usage screen)
+- `chime` - `on` / `off` (play a sound through the speaker when your 5-hour
   session limit resets)
-- `config_dirs` — poll more than one `~/.claude*` plan and show whichever is
+- `config_dirs` - poll more than one `~/.claude*` plan and show whichever is
   active
 
 ---
@@ -215,8 +220,8 @@ Copy [`daemon/config.example`](daemon/config.example) there to start. Keys:
 
 The board speaks to you through its onboard speaker twice a day:
 
-- **08:00** — a short motivating morning greeting
-- **20:00** — a wind-down / rest message in the evening
+- **08:00** - a short motivating morning greeting
+- **20:00** - a wind-down / rest message in the evening
 
 Each plays once per day, scheduled off the device clock. The audio is embedded
 in the firmware as 12 kHz PCM (`firmware/src/voice_morning_pcm.h` and
@@ -230,11 +235,11 @@ voice2   # play the evening clip
 ```
 
 **Change the times:** edit the schedule in `firmware/src/main.cpp` (search for
-`voice_schedule_tick`) — the two lines compare the current minute-of-day against
+`voice_schedule_tick`) - the two lines compare the current minute-of-day against
 `8 * 60` and `20 * 60`. Change those and reflash.
 
-**Change the messages / language:** the easiest way is the included helper —
-type your text, in any language, and it regenerates the header for you:
+**Change the messages / language:** the easiest way is the included helper.
+Type your text, in any language, and it regenerates the header for you:
 
 ```bash
 tools/gen_voice.sh morning en "Good morning! Have a productive day."
@@ -245,7 +250,7 @@ tools/gen_voice.sh evening uk "Добрий вечір. Час відпочив�
 
 It uses free Google Translate TTS (no API key) and writes a 12 kHz / 16-bit /
 mono PCM header with the right symbol names. Needs `ffmpeg` (`brew install
-ffmpeg`). Keep clips short — they live in the app partition alongside the
+ffmpeg`). Keep clips short - they live in the app partition alongside the
 firmware. Prefer your own audio? Any 12 kHz/16-bit/mono PCM emitted as a C byte
 array in the same shape works too (mirror `bell_pcm.h`).
 
@@ -257,14 +262,14 @@ array in the same shape works too (mirror `bell_pcm.h`).
 
 ## Customizing
 
-- **Weather city** — the daemon fetches London by default. Edit the open-meteo
+- **Weather city** - the daemon fetches London by default. Edit the open-meteo
   latitude/longitude (the `WX_URL` request) in
   `daemon/claude_usage_daemon.py` for your city.
-- **Agent dots** — the daemon lights these from named background agents in a
+- **Agent dots** - the daemon lights these from named background agents in a
   local `tmux` session. If you don't use that setup, the dots stay idle and
   harmless; or adapt `add_agent_health_fields` / `add_agent_busy_fields` in the
   daemon to your own signal.
-- **Add a board** — the firmware is structured around a small HAL so new panels
+- **Add a board** - the firmware is structured around a small HAL so new panels
   drop into `firmware/src/boards/<name>/`. See
   [`docs/porting/adding-a-board.md`](docs/porting/adding-a-board.md).
 
@@ -274,7 +279,7 @@ array in the same shape works too (mirror `bell_pcm.h`).
 
 | Symptom | Likely cause / fix |
 | --- | --- |
-| Screen dark / not updating | Usually **battery sleep**, not a fault. Tap PWR to wake, or keep it on USB (never sleeps on USB). Check `blueutil --connected \| grep -i clawd` — absent = asleep. |
+| Screen dark / not updating | Usually **battery sleep**, not a fault. Tap PWR to wake, or keep it on USB (never sleeps on USB). Check `blueutil --connected \| grep -i clawd` - absent = asleep. |
 | No Claude data on screen | Token issue. Look for `HTTP 401` in the daemon log. Make sure you're signed in to Claude Code; consider the [keep-warm helper](#keep-the-token-warm-optional). |
 | Daemon never connects under launchd | It needs its **own** Bluetooth permission. Grant Python under System Settings → Privacy & Security → Bluetooth, then `launchctl kickstart -k gui/$(id -u)/com.user.claude-usage-daemon`. |
 | `install-mac.sh` hangs in a non-interactive shell | Step [5/6] runs a foreground priming scan. Run it as `echo n \| ./install-mac.sh` to skip that and still load the launchd agent. |
@@ -287,10 +292,10 @@ array in the same shape works too (mirror `bell_pcm.h`).
 The firmware supports four boards from the same family (each is a PlatformIO
 env). This build targets the first:
 
-- `waveshare_amoled_216` — **Waveshare ESP32-S3-Touch-AMOLED-2.16** (480×480, main target)
-- `waveshare_amoled_18` — Waveshare ESP32-S3-Touch-AMOLED-1.8 (368×448)
-- `waveshare_amoled_216_c6` — ESP32-C6 variant (no PSRAM)
-- `waveshare_amoled_18_c6` — ESP32-C6 variant (no PSRAM)
+- `waveshare_amoled_216` - **Waveshare ESP32-S3-Touch-AMOLED-2.16** (480×480, main target)
+- `waveshare_amoled_18` - Waveshare ESP32-S3-Touch-AMOLED-1.8 (368×448)
+- `waveshare_amoled_216_c6` - ESP32-C6 variant (no PSRAM)
+- `waveshare_amoled_18_c6` - ESP32-C6 variant (no PSRAM)
 
 Audio features (chime, daily voice) require a board with the onboard codec/speaker
 (the 2.16" and 1.8" S3 boards).
@@ -320,7 +325,7 @@ install-mac.sh     set up the daemon (venv + launchd)
 ## Credits & License
 
 - Built on the open-source **[Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter)**
-  by **Hermann Bjorgvin** — the original ESP32 Claude usage display, its firmware
+  by **Hermann Bjorgvin** - the original ESP32 Claude usage display, its firmware
   architecture, and the Clawd mascot integration. Huge thanks. ⭐
 - Weather by [open-meteo](https://open-meteo.com/) (free, no key).
 - Built with [PlatformIO](https://platformio.org/), [LVGL](https://lvgl.io/),
@@ -331,7 +336,7 @@ repo (like upstream) bundles **proprietary fonts** (Styrene B, Tiempos) and the
 **copyrighted Clawd / Claude mascot artwork**, which are the property of their
 owners and are **not** covered by MIT. "Claude", "Claude Code", and "Anthropic"
 are trademarks of Anthropic PBC. **Read [`LICENSE`](LICENSE) in full before
-redistributing** — if you publish a build, you're responsible for the rights to
+redistributing** - if you publish a build, you're responsible for the rights to
 those assets (or replace them). The upstream author's original notes are kept in
 [`README.upstream.md`](README.upstream.md).
 
@@ -339,5 +344,5 @@ those assets (or replace them). The upstream author's original notes are kept in
 
 ## Author
 
-Made by **Oleh** — [@iam.oleh on Instagram](https://www.instagram.com/iam.oleh).
+Made by **Oleh** - [@iam.oleh on Instagram](https://www.instagram.com/iam.oleh).
 Follow along for more desk-hardware and AI tinkering.
