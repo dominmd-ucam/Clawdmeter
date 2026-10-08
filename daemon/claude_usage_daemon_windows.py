@@ -36,6 +36,7 @@ SERVICE_UUID = "4c41555a-4465-7669-6365-000000000001"
 RX_CHAR_UUID = "4c41555a-4465-7669-6365-000000000002"
 REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
 META_CHAR_UUID = "4c41555a-4465-7669-6365-000000000005"  # now-playing JSON (Música screen)
+ART_CHAR_UUID = "4c41555a-4465-7669-6365-000000000006"   # cover JPEG, chunked
 CMD_CHAR_UUID = "4c41555a-4465-7669-6365-000000000007"   # board → host media commands
 
 MEDIA_INTERVAL = 2.0   # s between SMTC reads; sends only when something changed
@@ -558,6 +559,27 @@ class Session:
         await asyncio.sleep(0.4)   # let the player switch track before re-reading
         self.media_kick.set()
 
+    async def send_cover(self, np, art_id: int, max_bytes: int) -> bool:
+        """Push the cover as a baseline JPEG in [id][offset][total]+data chunks.
+        Sent before the meta that names art_id, so the board can show it at once.
+        Returns False only on a BLE failure (worth retrying on the next tick)."""
+        try:
+            jpeg = media.make_cover_jpeg(np.thumbnail)
+        except Exception as e:  # PIL can't open some thumbnails; just skip the cover
+            log(f"Cover conversion failed: {e}")
+            return True   # retrying the same bytes won't help; wait for the next cover
+        chunks = media.art_chunks(art_id, jpeg, max_bytes - media.CHUNK_HEADER.size)
+        t0 = time.time()
+        try:
+            for chunk in chunks:
+                async with self.write_lock:
+                    await self.client.write_gatt_char(ART_CHAR_UUID, chunk, response=False)
+        except (BleakError, OSError) as e:
+            log(f"Cover write failed: {e}")
+            return False
+        log(f"Cover sent: {len(jpeg)} bytes in {len(chunks)} chunks, {time.time() - t0:.1f}s")
+        return True
+
     async def media_loop(self, stop_event: asyncio.Event) -> None:
         try:
             await self.client.start_notify(CMD_CHAR_UUID, self._on_media_cmd)
@@ -565,6 +587,7 @@ class Session:
             log(f"Media command subscription unavailable: {e}")
         max_bytes = min(self.client.mtu_size - 3, 500)
         last_key, last_sent, last_track = None, 0.0, None
+        last_art = 0   # per connection: a rebooted board needs the cover again
         while self.client.is_connected and not stop_event.is_set():
             self.media_kick.clear()
             try:
@@ -573,6 +596,10 @@ class Session:
                 log(f"Media read failed: {e}")
                 np = None
             payload = media.meta_payload(np)
+            art_id = payload.get("art", 0)
+            if art_id and art_id != last_art:
+                if await self.send_cover(np, art_id, max_bytes):
+                    last_art = art_id
             key = {k: v for k, v in payload.items() if k != "pos"}
             now = time.time()
             if key != last_key or now - last_sent >= MEDIA_RESYNC:
