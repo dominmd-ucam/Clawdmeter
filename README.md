@@ -2,7 +2,7 @@
   <img src="images/logo.png" alt="clawdmeter plus" width="760">
 </p>
 
-# Clawdmeter Plus (versión de Domingo)
+# Clawdmeter Plus (versión de Propia)
 
 > **Este proyecto es un fork del original.** El proyecto base es
 > [Clawdmeter Plus de sorryhumans](https://github.com/sorryhumans/clawdmeter-plus), que a su vez
@@ -12,6 +12,7 @@
 > **instalación mucho más sencilla en Windows** (basta un `git clone` y un par de comandos).
 > El resto del documento es el README original, traducido al español.
 
+¿Que es esto?
 Una pequeña pantalla AMOLED de escritorio que muestra tu uso de **Claude Code** en directo, la
 hora, el tiempo, el estado de varios servicios y una mascota animada en pixel art.
 Funciona con una [Waveshare ESP32-S3-Touch-AMOLED-2.16](https://www.waveshare.com/esp32-s3-touch-amoled-2.16.htm?&aff_id=149786)
