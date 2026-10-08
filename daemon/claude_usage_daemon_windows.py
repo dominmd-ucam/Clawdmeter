@@ -26,10 +26,20 @@ from bleak import BleakClient
 from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 
+try:
+    from . import media_windows as media      # run as package (tests: daemon.claude_usage_daemon_windows)
+except ImportError:
+    import media_windows as media             # run as script / from tray_windows.py
+
 DEVICE_NAME = "Clawdmeter"
 SERVICE_UUID = "4c41555a-4465-7669-6365-000000000001"
 RX_CHAR_UUID = "4c41555a-4465-7669-6365-000000000002"
 REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
+META_CHAR_UUID = "4c41555a-4465-7669-6365-000000000005"  # now-playing JSON (Música screen)
+CMD_CHAR_UUID = "4c41555a-4465-7669-6365-000000000007"   # board → host media commands
+
+MEDIA_INTERVAL = 2.0   # s between SMTC reads; sends only when something changed
+MEDIA_RESYNC = 10.0    # s — re-send anyway so the board's progress bar stays in sync
 
 POLL_INTERVAL = 60
 TICK = 5
@@ -489,6 +499,8 @@ class Session:
     def __init__(self, client: BleakClient) -> None:
         self.client = client
         self.refresh_requested = asyncio.Event()
+        self.media_kick = asyncio.Event()   # re-read SMTC now (after a board command)
+        self.write_lock = asyncio.Lock()    # usage + media writes share one link
 
     def _on_refresh(self, _char, _data: bytearray) -> None:
         log("Refresh requested by device")
@@ -510,7 +522,8 @@ class Session:
         data = json.dumps(payload, separators=(",", ":")).encode()
         log(f"Sending: {data.decode()}")
         try:
-            await self.client.write_gatt_char(RX_CHAR_UUID, data, response=False)
+            async with self.write_lock:
+                await self.client.write_gatt_char(RX_CHAR_UUID, data, response=False)
             return True
         except (BleakError, OSError) as e:
             # WinRT can raise a raw OSError/WinError (NOT wrapped as BleakError)
@@ -521,6 +534,60 @@ class Session:
             # silent-freeze failure mode, SC#2 field report).
             log(f"Write failed: {e}")
             return False
+
+    # ---- Música screen -------------------------------------------------------
+    # Entirely best-effort: any media failure is logged and swallowed so it can
+    # never take down the usage link (which owns the zombie-link detection).
+
+    def supports_media(self) -> bool:
+        try:
+            return self.client.services.get_characteristic(META_CHAR_UUID) is not None
+        except (BleakError, AttributeError):
+            return False
+
+    def _on_media_cmd(self, _char, data: bytearray) -> None:
+        if data:
+            asyncio.get_running_loop().create_task(self._run_media_cmd(data[0]))
+
+    async def _run_media_cmd(self, cmd: int) -> None:
+        try:
+            ok = await media.send_command(cmd)
+            log(f"Media command {cmd} -> {ok}")
+        except Exception as e:  # WinRT errors are not a stable exception family
+            log(f"Media command {cmd} failed: {e}")
+        await asyncio.sleep(0.4)   # let the player switch track before re-reading
+        self.media_kick.set()
+
+    async def media_loop(self, stop_event: asyncio.Event) -> None:
+        try:
+            await self.client.start_notify(CMD_CHAR_UUID, self._on_media_cmd)
+        except (BleakError, ValueError, OSError) as e:
+            log(f"Media command subscription unavailable: {e}")
+        max_bytes = min(self.client.mtu_size - 3, 500)
+        last_key, last_sent, last_track = None, 0.0, None
+        while self.client.is_connected and not stop_event.is_set():
+            self.media_kick.clear()
+            try:
+                np = await media.read_now_playing()
+            except Exception as e:
+                log(f"Media read failed: {e}")
+                np = None
+            payload = media.meta_payload(np)
+            key = {k: v for k, v in payload.items() if k != "pos"}
+            now = time.time()
+            if key != last_key or now - last_sent >= MEDIA_RESYNC:
+                track = (payload.get("t"), payload.get("a"))
+                if track != last_track:
+                    log(f"Now playing: {track[0]} - {track[1]}" if np else "Now playing: nothing")
+                    last_track = track
+                try:
+                    async with self.write_lock:
+                        await self.client.write_gatt_char(
+                            META_CHAR_UUID, media.encode_meta(payload, max_bytes), response=False)
+                    last_key, last_sent = key, now
+                except (BleakError, OSError) as e:
+                    log(f"Media write failed: {e}")
+            await _wait_first(self.media_kick, stop_event, timeout=MEDIA_INTERVAL)
 
 
 def _extract_access_token(blob: str) -> str | None:
@@ -693,6 +760,11 @@ async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) ->
     log("Connected")
     session = Session(client)
     await session.setup_refresh_subscription()
+    media_task = None
+    if session.supports_media():
+        media_task = asyncio.create_task(session.media_loop(stop_event))
+    else:
+        log("Board firmware has no music screen; media disabled")
 
     last_poll = 0.0  # D-03: poll immediately on first connect
     used_successfully = False
@@ -744,6 +816,14 @@ async def connect_and_run(device, stop_event: asyncio.Event, tray_state=None) ->
             # being left frozen on stale data after Quit (SC#3 graceful shutdown).
             await _wait_first(session.refresh_requested, stop_event, timeout=TICK)
     finally:
+        if media_task:
+            media_task.cancel()
+            try:
+                await media_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                log(f"Media task ended with error: {e}")
         # Clean GATT disconnect on the way out — this is what tells the peripheral
         # the link is gone. WinRT can surface a raw OSError (not BleakError) here,
         # so swallow both; the link tears down regardless once we exit.
