@@ -5,6 +5,7 @@
 #include "logo.h"
 #include "icons.h"
 #include "icons_status.h"
+#include "icons_services.h"
 #include "hal/board_caps.h"
 
 // Custom fonts (scaled for 314 PPI, ~1.9x from original 165 PPI)
@@ -152,6 +153,7 @@ static bool      s_agent_busy[5] = {};          // mirror of agent_busy, for the
 
 // ---- Battery indicator (shared, on top) ----
 static lv_obj_t* battery_img;
+static lv_obj_t* lbl_batt_pct = nullptr;
 static lv_obj_t* logo_img;
 static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 
@@ -502,9 +504,10 @@ static int weather_icon_for(int code) {
 
 // Per-agent identity icon data (icons_status.h) — general,etsy,upwork,appdev,heirpaws.
 static const uint8_t* const AGENT_ICON_DATA[5] = {
-    icon_ag_general_data, icon_ag_etsy_data, icon_ag_upwork_data,
-    icon_ag_appdev_data, icon_ag_heirpaws_data
+    icon_sv_claude_data, icon_sv_github_data, icon_sv_devops_data,
+    icon_sv_shopify_data, icon_sv_minipc_data
 };
+static const char* const SV_NAMES[5] = {"Claude", "GitHub", "DevOps", "Shopify", "MiniPC"};
 
 static void init_status_screen(lv_obj_t* scr) {
     status_container = lv_obj_create(scr);
@@ -531,12 +534,13 @@ static void init_status_screen(lv_obj_t* scr) {
     img_flag = lv_image_create(wpanel);
     lv_image_set_src(img_flag, &flag_dsc);
     lv_obj_set_pos(img_flag, 0, 3);
+    lv_obj_add_flag(img_flag, LV_OBJ_FLAG_HIDDEN);   // Murcia: sin bandera
 
     lv_obj_t* wlbl = lv_label_create(wpanel);
-    lv_label_set_text(wlbl, "London");
+    lv_label_set_text(wlbl, "Murcia");
     lv_obj_set_style_text_font(wlbl, &font_styrene_20, 0);
     lv_obj_set_style_text_color(wlbl, COL_DIM, 0);
-    lv_obj_set_pos(wlbl, 40, 1);
+    lv_obj_set_pos(wlbl, 0, 1);
 
     lbl_weather_temp = lv_label_create(wpanel);
     lv_label_set_text(lbl_weather_temp, "--");
@@ -621,7 +625,7 @@ static void init_status_screen(lv_obj_t* scr) {
                                   L.content_y + 150 + 16, L.content_w, 150);
 
     lv_obj_t* albl = lv_label_create(apanel);
-    lv_label_set_text(albl, "Agents");
+    lv_label_set_text(albl, "Servicios");
     lv_obj_set_style_text_font(albl, &font_styrene_20, 0);
     lv_obj_set_style_text_color(albl, COL_DIM, 0);
     lv_obj_set_pos(albl, 0, 0);
@@ -635,7 +639,7 @@ static void init_status_screen(lv_obj_t* scr) {
         // Created before the icon/dot so they render on top of it.
         int hl_w = inner_w / 5 - 8;
         lv_obj_t* hl = lv_obj_create(apanel);
-        lv_obj_set_size(hl, hl_w, 88);
+        lv_obj_set_size(hl, hl_w, 100);
         lv_obj_set_pos(hl, center_x - hl_w / 2, 22);
         lv_obj_set_style_radius(hl, 14, 0);
         lv_obj_set_style_bg_color(hl, COL_ACCENT, 0);
@@ -665,6 +669,15 @@ static void init_status_screen(lv_obj_t* scr) {
         lv_obj_clear_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_add_flag(dot, LV_OBJ_FLAG_EVENT_BUBBLE);
         agent_dots[i] = dot;
+
+        lv_obj_t* nl = lv_label_create(apanel);
+        lv_label_set_text(nl, SV_NAMES[i]);
+        lv_obj_set_style_text_font(nl, &font_styrene_16, 0);
+        lv_obj_set_style_text_color(nl, COL_DIM, 0);
+        lv_obj_set_style_text_align(nl, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(nl, inner_w / 5);
+        lv_obj_set_pos(nl, center_x - inner_w / 10, 102);
+        lv_obj_add_flag(nl, LV_OBJ_FLAG_EVENT_BUBBLE);
     }
 }
 
@@ -701,6 +714,14 @@ void ui_init(void) {
     battery_img = lv_image_create(scr);
     lv_image_set_src(battery_img, &battery_dscs[0]);
     lv_obj_set_pos(battery_img, L.scr_w - 48 - L.margin, L.title_y);
+
+    lbl_batt_pct = lv_label_create(scr);
+    lv_label_set_text(lbl_batt_pct, "");
+    lv_obj_set_style_text_font(lbl_batt_pct, &font_styrene_20, 0);
+    lv_obj_set_style_text_color(lbl_batt_pct, COL_DIM, 0);
+    lv_obj_set_style_text_align(lbl_batt_pct, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_width(lbl_batt_pct, 70);
+    lv_obj_align_to(lbl_batt_pct, battery_img, LV_ALIGN_OUT_LEFT_MID, -2, 0);
 
 }
 
@@ -798,7 +819,8 @@ void ui_update(const UsageData* data) {
     if (data->agents_present) {
         for (int i = 0; i < 5; i++) {
             lv_obj_set_style_bg_color(agent_dots[i],
-                                      data->agents[i] ? COL_GREEN : COL_RED, 0);
+                                      data->agent_unknown[i] ? COL_DIM
+                                      : (data->agents[i] ? COL_GREEN : COL_RED), 0);
             // Orange highlight pulses on agents that are actively working (see tick loop).
             s_agent_busy[i] = data->agent_busy[i];
             if (agent_hl[i] && !data->agent_busy[i])
@@ -930,6 +952,10 @@ static void apply_battery_visibility(void) {
     if (!battery_img) return;
     if (current_screen == SCREEN_SPLASH) lv_obj_add_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
     else                                  lv_obj_clear_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
+    if (lbl_batt_pct) {
+        if (current_screen == SCREEN_SPLASH) lv_obj_add_flag(lbl_batt_pct, LV_OBJ_FLAG_HIDDEN);
+        else                                  lv_obj_clear_flag(lbl_batt_pct, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void global_click_cb(lv_event_t* e) {
@@ -1002,5 +1028,9 @@ void ui_update_battery(int percent, bool charging) {
         idx = 3;
     }
     lv_image_set_src(battery_img, &battery_dscs[idx]);
+    if (lbl_batt_pct) {
+        if (percent < 0) lv_label_set_text(lbl_batt_pct, "");
+        else             lv_label_set_text_fmt(lbl_batt_pct, "%d%%", percent);
+    }
     apply_battery_visibility();
 }

@@ -125,6 +125,7 @@ static bool parse_json(const char* json, UsageData* out) {
     const char* ag = doc["ag"] | "";
     out->agents_present = (strlen(ag) >= 5);
     for (int i = 0; i < 5; i++) out->agents[i] = (out->agents_present && ag[i] == '1');
+    for (int i = 0; i < 5; i++) out->agent_unknown[i] = (out->agents_present && ag[i] == '?');
     const char* bz = doc["bz"] | "";
     bool bz_ok = (strlen(bz) >= 5);
     for (int i = 0; i < 5; i++) out->agent_busy[i] = (bz_ok && bz[i] == '1');

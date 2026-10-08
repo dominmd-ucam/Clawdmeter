@@ -19,6 +19,7 @@ struct UsageData {
     int  weather_cond;       // WMO weather code (today); -1 = no data
     bool agents[5];          // per-agent alive flags: general,etsy,upwork,appdev,heirpaws
     bool agents_present;     // true if the daemon sent the `ag` field
+    bool agent_unknown[5];   // slot state unknown ('?' in ag): shown gray
     bool agent_busy[5];      // per-agent "actively working" flags (from `bz`)
     int  tomorrow_high;      // London tomorrow max temp °C; -999 = no data
     int  tomorrow_cond;      // WMO weather code (tomorrow); -1 = no data

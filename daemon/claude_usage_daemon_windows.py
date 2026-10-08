@@ -183,6 +183,135 @@ def add_clock_fields(payload: dict) -> None:
     payload["tf"] = tf
 
 
+# ---- Tiempo (Murcia) via open-meteo, sin clave ----
+WX_URL = ("https://api.open-meteo.com/v1/forecast?latitude=37.9834&longitude=-1.1299"
+          "&current=temperature_2m,weather_code"
+          "&daily=temperature_2m_max,weather_code&timezone=auto&forecast_days=2")
+_WX_TTL = 1800  # refresca como maximo cada 30 min
+_wx_cache = {"ts": 0.0, "wt": None, "wc": None, "wt2": None, "wc2": None}
+
+
+async def add_weather_fields(payload: dict) -> None:
+    now = time.time()
+    if _wx_cache["wt"] is None or now - _wx_cache["ts"] > _WX_TTL:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http:
+                data = (await http.get(WX_URL)).json()
+            cur = data.get("current", {})
+            upd = dict(ts=now, wt=round(float(cur["temperature_2m"])),
+                       wc=int(cur["weather_code"]))
+            daily = data.get("daily", {})
+            try:
+                upd["wt2"] = round(float(daily["temperature_2m_max"][1]))
+                upd["wc2"] = int(daily["weather_code"][1])
+            except (KeyError, IndexError, TypeError, ValueError):
+                pass
+            _wx_cache.update(upd)
+        except Exception as e:
+            log(f"weather fetch failed: {e}")
+    if _wx_cache["wt"] is not None:
+        payload["wt"] = _wx_cache["wt"]
+        payload["wc"] = _wx_cache["wc"]
+    if _wx_cache["wt2"] is not None:
+        payload["wt2"] = _wx_cache["wt2"]
+        payload["wc2"] = _wx_cache["wc2"]
+
+
+
+# ---- Estado de servicios (panel "Servicios" de la placa) ----
+# ag: 5 caracteres, '1' operativo, '0' caido, '?' desconocido (gris). bz: '1' degradado (naranja).
+# Orden: Claude, GitHub, DevOps, Shopify, MiniPC
+SERVICE_URLS = [
+    "https://status.claude.com/api/v2/status.json",
+    "https://www.githubstatus.com/api/v2/status.json",
+    "https://status.dev.azure.com/_apis/status/health?api-version=6.0-preview.1",
+    "https://www.shopifystatus.com/api/v2/status.json",
+]
+_SV_TTL = 180
+_sv_cache = {"ts": 0.0, "ag": "?????", "bz": "00000"}
+_sv_last_log = {}
+
+
+def read_config_value(key: str) -> str:
+    try:
+        if CONFIG_FILE.exists():
+            for line in CONFIG_FILE.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                if k.strip().lower() == key:
+                    return v.strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _classify(data: dict):
+    """Devuelve (ag, bz) para Statuspage (status.indicator) o Azure DevOps (status.health)."""
+    st = data.get("status", {})
+    ind = str(st.get("indicator", "")).lower()
+    if ind:
+        if ind == "none":
+            return "1", "0"
+        if ind in ("minor", "maintenance"):
+            return "1", "1"
+        return "0", "0"
+    health = str(st.get("health", "")).lower()
+    if health:
+        if health == "healthy":
+            return "1", "0"
+        if health in ("advisory", "degraded"):
+            return "1", "1"
+        return "0", "0"
+    return "?", "0"
+
+
+async def _check_status_url(http, name: str, url: str):
+    try:
+        resp = await http.get(url, headers={"User-Agent": "clawdmeter-status/1.0"})
+        res = _classify(resp.json())
+    except Exception as e:
+        res = ("?", "0")
+        if _sv_last_log.get(name) != "err":
+            log(f"service {name}: check failed: {e}")
+        _sv_last_log[name] = "err"
+        return res
+    if _sv_last_log.get(name) != res:
+        log(f"service {name}: ag={res[0]} bz={res[1]}")
+        _sv_last_log[name] = res
+    return res
+
+
+def _ping(host: str) -> bool:
+    try:
+        r = subprocess.run(["ping", "-n", "1", "-w", "1500", host], capture_output=True, text=True,
+                           timeout=6, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return "TTL=" in r.stdout.upper()
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+async def add_service_fields(payload: dict) -> None:
+    now = time.time()
+    if now - _sv_cache["ts"] > _SV_TTL:
+        names = ["Claude", "GitHub", "DevOps", "Shopify"]
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as http:
+            results = await asyncio.gather(*[_check_status_url(http, n, u) for n, u in zip(names, SERVICE_URLS)])
+        host = read_config_value("minipc")
+        if host:
+            ok = await asyncio.to_thread(_ping, host)
+            results.append(("1" if ok else "0", "0"))
+            if _sv_last_log.get("MiniPC") != ok:
+                log(f"service MiniPC ({host}): {'up' if ok else 'down'}")
+                _sv_last_log["MiniPC"] = ok
+        else:
+            results.append(("?", "0"))
+        _sv_cache.update(ts=now, ag="".join(r[0] for r in results), bz="".join(r[1] for r in results))
+    payload["ag"] = _sv_cache["ag"]
+    payload["bz"] = "00000"   # sin parpadeo: solo colores (verde / rojo / gris)
+
+
 async def poll_api(token: str) -> dict | None:
     headers = dict(API_HEADERS_TEMPLATE)
     headers["Authorization"] = f"Bearer {token}"
@@ -246,6 +375,8 @@ async def poll_api(token: str) -> dict | None:
         }
     add_chime_field(payload)   # adds "c":1 iff the config opts in
     add_clock_fields(payload)   # adds "t" + "tf" iff the config opts in
+    await add_weather_fields(payload)
+    await add_service_fields(payload)
     return payload
 
 
