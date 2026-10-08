@@ -7,6 +7,8 @@
 #include "icons_status.h"
 #include "icons_services.h"
 #include "hal/board_caps.h"
+#include "cover.h"
+#include <esp_heap_caps.h>
 
 // Custom fonts (scaled for 314 PPI, ~1.9x from original 165 PPI)
 LV_FONT_DECLARE(font_tiempos_56);
@@ -184,6 +186,11 @@ static lv_obj_t* bar_music = nullptr;
 static lv_obj_t* lbl_music_pos = nullptr;
 static lv_obj_t* lbl_music_dur = nullptr;
 static lv_obj_t* lbl_music_play = nullptr;     // play/pause glyph inside the big button
+static lv_obj_t* music_note = nullptr;         // placeholder glyph while there is no cover
+static lv_obj_t* img_music_cover = nullptr;
+static lv_image_dsc_t cover_dsc;
+static uint16_t* cover_px = nullptr;           // decoded cover, RGB565, music_cover² px (PSRAM)
+static uint16_t  cover_id = 0;                 // art id currently held in cover_px; 0 = none
 static MusicData s_music = {};
 static uint32_t  music_rx_ms = 0;              // lv_tick when s_music landed (progress extrapolation)
 static uint32_t  music_last_draw_ms = 0;
@@ -790,11 +797,30 @@ static void init_music_screen(lv_obj_t* scr) {
     lv_obj_set_style_clip_corner(music_cover, true, 0);
     lv_obj_clear_flag(music_cover, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(music_cover, LV_OBJ_FLAG_EVENT_BUBBLE);
-    lv_obj_t* note = lv_label_create(music_cover);
-    lv_label_set_text(note, LV_SYMBOL_AUDIO);
-    lv_obj_set_style_text_font(note, L.music_play_font, 0);
-    lv_obj_set_style_text_color(note, COL_DIM, 0);
-    lv_obj_center(note);
+    music_note = lv_label_create(music_cover);
+    lv_label_set_text(music_note, LV_SYMBOL_AUDIO);
+    lv_obj_set_style_text_font(music_note, L.music_play_font, 0);
+    lv_obj_set_style_text_color(music_note, COL_DIM, 0);
+    lv_obj_center(music_note);
+
+    // Decoded cover sits on top of the placeholder; the panel's clip_corner rounds it.
+#ifdef BOARD_HAS_PSRAM
+    cover_px = (uint16_t*)heap_caps_malloc((size_t)L.music_cover * L.music_cover * 2,
+                                           MALLOC_CAP_SPIRAM);
+#endif
+    if (cover_px) {
+        cover_dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+        cover_dsc.header.w = L.music_cover;
+        cover_dsc.header.h = L.music_cover;
+        cover_dsc.header.cf = LV_COLOR_FORMAT_RGB565;
+        cover_dsc.header.stride = L.music_cover * 2;
+        cover_dsc.data = (const uint8_t*)cover_px;
+        cover_dsc.data_size = (uint32_t)L.music_cover * L.music_cover * 2;
+        img_music_cover = lv_image_create(music_cover);
+        lv_obj_set_pos(img_music_cover, 0, 0);
+        lv_obj_add_flag(img_music_cover, LV_OBJ_FLAG_EVENT_BUBBLE);
+        lv_obj_add_flag(img_music_cover, LV_OBJ_FLAG_HIDDEN);
+    }
 
     int y = L.music_cover_y + L.music_cover + 14;
 
@@ -857,6 +883,34 @@ static void init_music_screen(lv_obj_t* scr) {
     lv_obj_set_pos(b, cx + L.music_btn_play / 2 + gap, row_cy - L.music_btn / 2);
 }
 
+// Show the decoded cover only when it belongs to the current track; otherwise
+// fall back to the note glyph (no cover, or the new one hasn't arrived yet).
+static void apply_cover(bool active) {
+    if (!img_music_cover) return;
+    bool show = active && s_music.art_id != 0 && s_music.art_id == cover_id;
+    bool shown = !lv_obj_has_flag(img_music_cover, LV_OBJ_FLAG_HIDDEN);
+    if (show == shown) return;
+    if (show) {
+        lv_obj_clear_flag(img_music_cover, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(music_note, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(img_music_cover, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(music_note, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void ui_set_music_art(uint16_t id, const uint8_t* jpg, uint32_t len) {
+    if (!cover_px || id == 0) return;
+    if (!cover_decode(jpg, len, cover_px, L.music_cover, L.music_cover)) return;
+    cover_id = id;
+    // Same descriptor, new pixels. RGB565 variable images aren't cached (LVGL's
+    // image cache is off by default), so re-pointing + invalidating is enough.
+    lv_image_set_src(img_music_cover, &cover_dsc);
+    lv_obj_invalidate(img_music_cover);
+    lv_obj_add_flag(img_music_cover, LV_OBJ_FLAG_HIDDEN);   // let apply_cover decide
+    apply_cover(music_shown_active == 1);
+}
+
 // Redraw the music screen from s_music. "Nothing playing" when the host has no
 // media session, the link is down, or the daemon's updates have gone stale.
 static void draw_music(uint32_t now) {
@@ -874,6 +928,7 @@ static void draw_music(uint32_t now) {
             lv_label_set_text(lbl_music_play, LV_SYMBOL_PLAY);
         }
     }
+    apply_cover(active);
     if (!active) return;
 
     int pos = s_music.position;

@@ -459,5 +459,13 @@ void loop() {
         if (parse_music_json(ble_get_music(), &music)) ui_update_music(&music);
     }
 
+    {
+        uint16_t art_id; const uint8_t* jpg; uint32_t len;
+        if (ble_get_art(&art_id, &jpg, &len)) {
+            ui_set_music_art(art_id, jpg, len);
+            ble_art_done();
+        }
+    }
+
     delay(5);
 }

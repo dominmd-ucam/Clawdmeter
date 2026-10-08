@@ -13,6 +13,7 @@ enum screen_t {
 void ui_init(void);
 void ui_update(const UsageData* data);
 void ui_update_music(const MusicData* data);
+void ui_set_music_art(uint16_t id, const uint8_t* jpg, uint32_t len);
 void ui_tick_anim(void);
 void ui_show_screen(screen_t screen);
 void ui_cycle_page(void);
