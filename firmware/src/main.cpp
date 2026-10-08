@@ -136,6 +136,25 @@ static bool parse_json(const char* json, UsageData* out) {
     return true;
 }
 
+// Parse the daemon's now-playing JSON (see daemon/media_windows.py meta_payload).
+static bool parse_music_json(const char* json, MusicData* out) {
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, json);
+    if (err) {
+        Serial.printf("Music JSON parse error: %s\n", err.c_str());
+        return false;
+    }
+    out->active = (doc["m"] | 0) == 1;
+    strlcpy(out->title,  doc["t"]  | "", sizeof(out->title));
+    strlcpy(out->artist, doc["a"]  | "", sizeof(out->artist));
+    strlcpy(out->album,  doc["al"] | "", sizeof(out->album));
+    out->playing  = (doc["p"] | 0) == 1;
+    out->position = doc["pos"] | 0;
+    out->duration = doc["dur"] | 0;
+    out->art_id   = doc["art"] | 0;
+    return true;
+}
+
 // ---- Serial command buffer ----
 #define CMD_BUF_SIZE 64
 static char cmd_buf[CMD_BUF_SIZE];
@@ -190,7 +209,7 @@ static void check_serial_cmd() {
             else if (strcmp(cmd_buf, "voice2") == 0) { Serial.println("voice2: evening"); sound_hal_play_voice_evening(); }
             else if (strcmp(cmd_buf, "page") == 0) {
                 // QA aid: drive the screen cycle over serial (no physical button).
-                // splash -> usage, then usage <-> status.
+                // splash -> usage, then usage -> status -> music.
                 if (ui_get_current_screen() == SCREEN_SPLASH) ui_show_screen(SCREEN_USAGE);
                 else                                          ui_cycle_page();
             }
@@ -382,8 +401,8 @@ void loop() {
 
         if (power_hal_pwr_pressed()) {
             if (!idle_consume_wake_press()) {
-                // On splash: cycle animations. On a data page: cycle between the
-                // usage and status pages (usage <-> status).
+                // On splash: cycle animations. On a data page: cycle the data
+                // pages (usage -> status -> music -> usage).
                 if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
                 else                                          ui_cycle_page();
             }
@@ -433,6 +452,11 @@ void loop() {
         } else {
             ble_send_nack();
         }
+    }
+
+    if (ble_has_music()) {
+        static MusicData music = {};
+        if (parse_music_json(ble_get_music(), &music)) ui_update_music(&music);
     }
 
     delay(5);

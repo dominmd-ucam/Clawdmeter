@@ -44,6 +44,17 @@ struct Layout {
     const lv_font_t* bt_device_font;
     const lv_font_t* bt_credit_1_font;
     const lv_font_t* bt_credit_2_font;
+
+    // Music screen (cover on top, text, progress, transport buttons)
+    int16_t music_cover;        // square cover side
+    int16_t music_cover_y;
+    int16_t music_btn;          // prev/next button diameter
+    int16_t music_btn_play;     // play/pause button diameter
+    const lv_font_t* music_title_font;
+    const lv_font_t* music_artist_font;
+    const lv_font_t* music_time_font;
+    const lv_font_t* music_icon_font;
+    const lv_font_t* music_play_font;
 };
 static Layout L = {};
 
@@ -71,6 +82,15 @@ static void compute_layout(const BoardCaps& c) {
         L.bt_device_font   = &font_styrene_28;
         L.bt_credit_1_font = &font_styrene_24;
         L.bt_credit_2_font = &font_styrene_20;
+        L.music_cover       = 200;
+        L.music_cover_y     = 30;
+        L.music_btn         = 68;
+        L.music_btn_play    = 88;
+        L.music_title_font  = &font_styrene_28;
+        L.music_artist_font = &font_styrene_20;
+        L.music_time_font   = &font_styrene_16;
+        L.music_icon_font   = &lv_font_montserrat_32;
+        L.music_play_font   = &lv_font_montserrat_40;
     } else {
         // Compact layout — tuned for 368x448 (AMOLED-1.8).
         L.content_y = 85;
@@ -85,6 +105,15 @@ static void compute_layout(const BoardCaps& c) {
         L.bt_device_font   = &font_styrene_20;
         L.bt_credit_1_font = &font_styrene_16;
         L.bt_credit_2_font = &font_styrene_14;
+        L.music_cover       = 150;
+        L.music_cover_y     = 64;   // below the battery label on the narrower panel
+        L.music_btn         = 60;
+        L.music_btn_play    = 76;
+        L.music_title_font  = &font_styrene_24;
+        L.music_artist_font = &font_styrene_16;
+        L.music_time_font   = &font_styrene_14;
+        L.music_icon_font   = &lv_font_montserrat_32;
+        L.music_play_font   = &lv_font_montserrat_32;
     }
 
     L.content_w = L.scr_w - 2 * L.margin;
@@ -145,6 +174,21 @@ static lv_obj_t* img_weather = nullptr;        // condition icon (swapped by wc)
 static lv_image_dsc_t flag_dsc;
 static lv_image_dsc_t weather_dscs[7];         // WI_* icons
 static lv_image_dsc_t agent_icon_dscs[5];      // per-agent identity icons
+
+// ---- Music screen widgets (now playing on the host, via the daemon) ----
+static lv_obj_t* music_container = nullptr;
+static lv_obj_t* music_cover = nullptr;        // placeholder panel; the cover image goes inside
+static lv_obj_t* lbl_music_title = nullptr;
+static lv_obj_t* lbl_music_artist = nullptr;
+static lv_obj_t* bar_music = nullptr;
+static lv_obj_t* lbl_music_pos = nullptr;
+static lv_obj_t* lbl_music_dur = nullptr;
+static lv_obj_t* lbl_music_play = nullptr;     // play/pause glyph inside the big button
+static MusicData s_music = {};
+static uint32_t  music_rx_ms = 0;              // lv_tick when s_music landed (progress extrapolation)
+static uint32_t  music_last_draw_ms = 0;
+static int       music_shown_active = -1;      // -1 unknown / 0 "nothing playing" / 1 track
+static const uint32_t MUSIC_FRESH_MS = 20000;  // daemon re-sends every few seconds while connected
 
 // ---- Animated top-left logo (claudepix creature, both pages) ----
 static splash_sprite_t logo_sprite = {};
@@ -681,6 +725,195 @@ static void init_status_screen(lv_obj_t* scr) {
     }
 }
 
+// ======== Music Screen ========
+
+static void media_btn_cb(lv_event_t* e) {
+    uint8_t cmd = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+    ble_send_media_cmd(cmd);
+    // Flip the glyph right away; the daemon's next update confirms the real state.
+    if (cmd == MEDIA_CMD_PLAYPAUSE && s_music.active) {
+        s_music.playing = !s_music.playing;
+        lv_label_set_text(lbl_music_play, s_music.playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+    }
+}
+
+// Round transport button. Deliberately NOT event-bubbling: a tap here must not
+// reach the container's global_click_cb (which toggles the splash).
+static lv_obj_t* make_media_btn(lv_obj_t* parent, int size, bool primary,
+                                const char* glyph, const lv_font_t* font, uint8_t cmd,
+                                lv_obj_t** out_label) {
+    lv_obj_t* btn = lv_obj_create(parent);
+    lv_obj_set_size(btn, size, size);
+    lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(btn, primary ? COL_ACCENT : COL_PANEL, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_60, LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_pad_all(btn, 0, 0);
+    lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(btn, media_btn_cb, LV_EVENT_CLICKED, (void*)(uintptr_t)cmd);
+
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, glyph);
+    lv_obj_set_style_text_font(lbl, font, 0);
+    lv_obj_set_style_text_color(lbl, COL_TEXT, 0);
+    lv_obj_center(lbl);
+    if (out_label) *out_label = lbl;
+    return btn;
+}
+
+static void format_mmss(int secs, char* buf, size_t len) {
+    if (secs < 0) secs = 0;
+    snprintf(buf, len, "%d:%02d", secs / 60, secs % 60);
+}
+
+static void init_music_screen(lv_obj_t* scr) {
+    music_container = lv_obj_create(scr);
+    lv_obj_set_size(music_container, L.scr_w, L.scr_h);
+    lv_obj_set_pos(music_container, 0, 0);
+    lv_obj_set_style_bg_opa(music_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(music_container, 0, 0);
+    lv_obj_set_style_pad_all(music_container, 0, 0);
+    lv_obj_clear_flag(music_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(music_container, global_click_cb, LV_EVENT_CLICKED, NULL);
+
+    // Cover slot — a rounded panel with a note glyph until the cover arrives.
+    music_cover = lv_obj_create(music_container);
+    lv_obj_set_size(music_cover, L.music_cover, L.music_cover);
+    lv_obj_align(music_cover, LV_ALIGN_TOP_MID, 0, L.music_cover_y);
+    lv_obj_set_style_bg_color(music_cover, COL_PANEL, 0);
+    lv_obj_set_style_bg_opa(music_cover, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(music_cover, 12, 0);
+    lv_obj_set_style_border_width(music_cover, 0, 0);
+    lv_obj_set_style_pad_all(music_cover, 0, 0);
+    lv_obj_set_style_clip_corner(music_cover, true, 0);
+    lv_obj_clear_flag(music_cover, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(music_cover, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_t* note = lv_label_create(music_cover);
+    lv_label_set_text(note, LV_SYMBOL_AUDIO);
+    lv_obj_set_style_text_font(note, L.music_play_font, 0);
+    lv_obj_set_style_text_color(note, COL_DIM, 0);
+    lv_obj_center(note);
+
+    int y = L.music_cover_y + L.music_cover + 14;
+
+    // Long titles scroll as a marquee instead of wrapping into the controls.
+    lbl_music_title = lv_label_create(music_container);
+    lv_label_set_long_mode(lbl_music_title, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    lv_obj_set_width(lbl_music_title, L.content_w);
+    lv_obj_set_style_text_align(lbl_music_title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(lbl_music_title, L.music_title_font, 0);
+    lv_obj_set_style_text_color(lbl_music_title, COL_TEXT, 0);
+    lv_obj_set_pos(lbl_music_title, L.margin, y);
+    lv_label_set_text(lbl_music_title, "");
+    y += lv_font_get_line_height(L.music_title_font) + 6;
+
+    lbl_music_artist = lv_label_create(music_container);
+    lv_label_set_long_mode(lbl_music_artist, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
+    lv_obj_set_width(lbl_music_artist, L.content_w);
+    lv_obj_set_style_text_align(lbl_music_artist, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_font(lbl_music_artist, L.music_artist_font, 0);
+    lv_obj_set_style_text_color(lbl_music_artist, COL_DIM, 0);
+    lv_obj_set_pos(lbl_music_artist, L.margin, y);
+    lv_label_set_text(lbl_music_artist, "");
+    y += lv_font_get_line_height(L.music_artist_font) + 14;
+
+    const int bar_x = L.margin + 20;
+    const int bar_w = L.content_w - 40;
+    bar_music = make_bar(music_container, bar_x, y, bar_w, 8);
+    lv_bar_set_range(bar_music, 0, 1000);
+    lv_obj_set_style_bg_color(bar_music, COL_ACCENT, LV_PART_INDICATOR);
+    lv_obj_add_flag(bar_music, LV_OBJ_FLAG_EVENT_BUBBLE);
+    y += 8 + 4;
+
+    lbl_music_pos = lv_label_create(music_container);
+    lv_obj_set_style_text_font(lbl_music_pos, L.music_time_font, 0);
+    lv_obj_set_style_text_color(lbl_music_pos, COL_DIM, 0);
+    lv_obj_set_pos(lbl_music_pos, bar_x, y);
+    lv_label_set_text(lbl_music_pos, "");
+
+    lbl_music_dur = lv_label_create(music_container);
+    lv_obj_set_style_text_font(lbl_music_dur, L.music_time_font, 0);
+    lv_obj_set_style_text_color(lbl_music_dur, COL_DIM, 0);
+    lv_obj_set_style_text_align(lbl_music_dur, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_width(lbl_music_dur, 100);
+    lv_obj_set_pos(lbl_music_dur, bar_x + bar_w - 100, y);
+    lv_label_set_text(lbl_music_dur, "");
+
+    // Transport row, centred under the progress bar, kept clear of the bottom edge.
+    const int row_cy = L.scr_h - 24 - L.music_btn_play / 2;
+    const int gap = 28;
+    const int cx = L.scr_w / 2;
+    lv_obj_t* b;
+    b = make_media_btn(music_container, L.music_btn, false, LV_SYMBOL_PREV,
+                       L.music_icon_font, MEDIA_CMD_PREV, nullptr);
+    lv_obj_set_pos(b, cx - L.music_btn_play / 2 - gap - L.music_btn, row_cy - L.music_btn / 2);
+    b = make_media_btn(music_container, L.music_btn_play, true, LV_SYMBOL_PLAY,
+                       L.music_play_font, MEDIA_CMD_PLAYPAUSE, &lbl_music_play);
+    lv_obj_set_pos(b, cx - L.music_btn_play / 2, row_cy - L.music_btn_play / 2);
+    b = make_media_btn(music_container, L.music_btn, false, LV_SYMBOL_NEXT,
+                       L.music_icon_font, MEDIA_CMD_NEXT, nullptr);
+    lv_obj_set_pos(b, cx + L.music_btn_play / 2 + gap, row_cy - L.music_btn / 2);
+}
+
+// Redraw the music screen from s_music. "Nothing playing" when the host has no
+// media session, the link is down, or the daemon's updates have gone stale.
+static void draw_music(uint32_t now) {
+    bool active = s_music.active && s_ble_connected &&
+                  (now - music_rx_ms) < MUSIC_FRESH_MS;
+
+    if ((int)active != music_shown_active) {
+        music_shown_active = active;
+        if (!active) {
+            lv_label_set_text(lbl_music_title, "Nada sonando");
+            lv_label_set_text(lbl_music_artist, s_ble_connected ? "Abre Spotify en el PC" : "Sin conexion");
+            lv_label_set_text(lbl_music_pos, "");
+            lv_label_set_text(lbl_music_dur, "");
+            lv_bar_set_value(bar_music, 0, LV_ANIM_OFF);
+            lv_label_set_text(lbl_music_play, LV_SYMBOL_PLAY);
+        }
+    }
+    if (!active) return;
+
+    int pos = s_music.position;
+    if (s_music.playing) pos += (int)((now - music_rx_ms) / 1000);
+    if (s_music.duration > 0 && pos > s_music.duration) pos = s_music.duration;
+
+    char buf[16];
+    format_mmss(pos, buf, sizeof(buf));
+    lv_label_set_text(lbl_music_pos, buf);
+    if (s_music.duration > 0) {
+        format_mmss(s_music.duration, buf, sizeof(buf));
+        lv_label_set_text(lbl_music_dur, buf);
+        lv_bar_set_value(bar_music, pos * 1000 / s_music.duration, LV_ANIM_OFF);
+    } else {
+        lv_label_set_text(lbl_music_dur, "");
+        lv_bar_set_value(bar_music, 0, LV_ANIM_OFF);
+    }
+}
+
+void ui_update_music(const MusicData* data) {
+    bool text_changed = strcmp(data->title, s_music.title) != 0 ||
+                        strcmp(data->artist, s_music.artist) != 0;
+    s_music = *data;
+    music_rx_ms = lv_tick_get();
+    if (!lbl_music_title) return;
+
+    // Only touch the scrolling labels when the text really changes — re-setting
+    // the same text restarts the marquee from the beginning.
+    if (s_music.active && (text_changed || music_shown_active != 1)) {
+        lv_label_set_text(lbl_music_title, s_music.title);
+        lv_label_set_text(lbl_music_artist, s_music.artist);
+    }
+    if (s_music.active) {
+        lv_label_set_text(lbl_music_play, s_music.playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+        music_shown_active = 1;
+    }
+    draw_music(music_rx_ms);
+    music_last_draw_ms = music_rx_ms;
+}
+
 // ======== Public API ========
 
 void ui_init(void) {
@@ -695,6 +928,7 @@ void ui_init(void) {
 
     init_usage_screen(scr);
     init_status_screen(scr);
+    init_music_screen(scr);
     splash_init(scr);
 
     if (splash_get_root()) {
@@ -913,6 +1147,12 @@ void ui_tick_anim(void) {
             if (agent_hl[i] && s_agent_busy[i]) lv_obj_set_style_bg_opa(agent_hl[i], pulse, 0);
     }
 
+    // Music progress ticks locally between daemon updates; redraw once a second.
+    if (current_screen == SCREEN_MUSIC && now - music_last_draw_ms >= 1000) {
+        music_last_draw_ms = now;
+        draw_music(now);
+    }
+
     if (current_screen != SCREEN_USAGE) return;
     update_view_state();
     if (view_state == 1) splash_mini_tick();   // animate the sleeping creature on the idle screen
@@ -967,12 +1207,17 @@ static void global_click_cb(lv_event_t* e) {
 void ui_show_screen(screen_t screen) {
     lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
     if (status_container) lv_obj_add_flag(status_container, LV_OBJ_FLAG_HIDDEN);
+    if (music_container) lv_obj_add_flag(music_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
 
     switch (screen) {
     case SCREEN_SPLASH:  splash_show(); break;
     case SCREEN_USAGE:   lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
     case SCREEN_STATUS:  if (status_container) lv_obj_clear_flag(status_container, LV_OBJ_FLAG_HIDDEN); break;
+    case SCREEN_MUSIC:
+        if (music_container) lv_obj_clear_flag(music_container, LV_OBJ_FLAG_HIDDEN);
+        draw_music(lv_tick_get());
+        break;
     default: break;
     }
 
@@ -986,11 +1231,12 @@ void ui_show_screen(screen_t screen) {
     apply_battery_visibility();
 }
 
-// Cycle between the two non-splash pages (usage <-> status). Called by the PWR
-// button short-press when not on the splash screen.
+// Cycle the non-splash pages (usage -> status -> music -> usage). Called by the
+// PWR button short-press when not on the splash screen.
 void ui_cycle_page(void) {
-    if (current_screen == SCREEN_STATUS) ui_show_screen(SCREEN_USAGE);
-    else                                 ui_show_screen(SCREEN_STATUS);
+    if      (current_screen == SCREEN_USAGE)  ui_show_screen(SCREEN_STATUS);
+    else if (current_screen == SCREEN_STATUS) ui_show_screen(SCREEN_MUSIC);
+    else                                      ui_show_screen(SCREEN_USAGE);
 }
 
 void ui_toggle_splash(void) {

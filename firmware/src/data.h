@@ -26,3 +26,16 @@ struct UsageData {
     bool ok;                 // data parse succeeded
     bool valid;              // false until first successful parse
 };
+
+// Now-playing info for the Música screen (daemon reads Windows SMTC).
+// Text is UTF-8; the daemon caps each field so the JSON fits one BLE write.
+struct MusicData {
+    bool active;             // something is playing/paused on the host
+    char title[136];
+    char artist[136];
+    char album[136];
+    bool playing;            // false = paused
+    int  position;           // seconds, as of when this update landed
+    int  duration;           // seconds; 0 = unknown
+    uint16_t art_id;         // cover id; 0 = no cover
+};

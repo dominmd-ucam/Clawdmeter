@@ -3,6 +3,7 @@
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 #include <Preferences.h>
+#include <esp_heap_caps.h>
 
 #define DEVICE_NAME "Clawdmeter"
 
@@ -11,6 +12,9 @@
 #define RX_CHAR_UUID        "4c41555a-4465-7669-6365-000000000002"  // host writes here
 #define TX_CHAR_UUID        "4c41555a-4465-7669-6365-000000000003"  // device ack/nack notifies
 #define REQ_CHAR_UUID       "4c41555a-4465-7669-6365-000000000004"  // device-initiated refresh request
+#define META_CHAR_UUID      "4c41555a-4465-7669-6365-000000000005"  // host writes now-playing JSON
+#define ART_CHAR_UUID       "4c41555a-4465-7669-6365-000000000006"  // host writes cover JPEG in chunks
+#define CMD_CHAR_UUID       "4c41555a-4465-7669-6365-000000000007"  // device notifies media commands
 
 #define BLE_BUF_SIZE 512
 
@@ -61,11 +65,26 @@ static NimBLECharacteristic* input_kbd = nullptr;
 static NimBLECharacteristic* tx_char = nullptr;
 static NimBLECharacteristic* rx_char = nullptr;
 static NimBLECharacteristic* req_char = nullptr;
+static NimBLECharacteristic* meta_char = nullptr;
+static NimBLECharacteristic* cmd_char = nullptr;
 
 static ble_state_t state = BLE_STATE_INIT;
 static bool need_advertise = false;
 static char rx_buf[BLE_BUF_SIZE];
 static volatile bool data_ready = false;
+static char meta_buf[BLE_BUF_SIZE];
+static volatile bool meta_ready = false;
+
+// Cover art reassembly. Each write is [art_id u16][offset u32][total u32][data],
+// little-endian, sent in order. A transfer completes when offset+len == total;
+// the buffer is then frozen (further chunks dropped) until the main loop calls
+// ble_art_done(), so the decoder never reads a buffer that is being rewritten.
+static NimBLECharacteristic* art_char = nullptr;
+static uint8_t* art_buf = nullptr;              // ART_MAX_BYTES, PSRAM; null = art disabled
+static uint16_t art_rx_id = 0;
+static uint32_t art_rx_total = 0;
+static uint32_t art_rx_got = 0;
+static volatile bool art_ready = false;
 static volatile bool has_received_data = false;
 static char mac_str[18];
 
@@ -210,30 +229,73 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
 };
 
+// Only accept host data over a bonded+encrypted link, and only from the
+// owner machine. Another machine's daemon in range is ignored so the
+// display never rotates to a foreign account. The first encrypted writer
+// claims ownership when none is set yet (e.g. a fresh pairing).
+static bool accept_owner_write(NimBLEConnInfo& info) {
+    std::string id = info.getIdAddress().toString();
+    if (!info.isEncrypted()) {
+        Serial.println("BLE: dropping write from unencrypted link");
+        return false;
+    }
+    if (!owner_set && id != ZERO_ADDR) {
+        claim_owner(id);
+    }
+    if (owner_set && strcmp(id.c_str(), owner_addr) != 0) {
+        Serial.printf("BLE: dropping write from non-owner %s\n", id.c_str());
+        return false;
+    }
+    return true;
+}
+
 class RxCallbacks : public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& info) override {
-        // Only accept usage data over a bonded+encrypted link, and only from the
-        // owner machine. Another machine's daemon in range is ignored so the
-        // display never rotates to a foreign account. The first encrypted writer
-        // claims ownership when none is set yet (e.g. a fresh pairing).
-        std::string id = info.getIdAddress().toString();
-        if (!info.isEncrypted()) {
-            Serial.println("BLE: dropping RX write from unencrypted link");
-            return;
-        }
-        if (!owner_set && id != ZERO_ADDR) {
-            claim_owner(id);
-        }
-        if (owner_set && strcmp(id.c_str(), owner_addr) != 0) {
-            Serial.printf("BLE: dropping RX write from non-owner %s\n", id.c_str());
-            return;
-        }
+        if (!accept_owner_write(info)) return;
         std::string val = chr->getValue();
         size_t len = std::min(val.length(), (size_t)(BLE_BUF_SIZE - 1));
         memcpy(rx_buf, val.c_str(), len);
         rx_buf[len] = '\0';
         data_ready = true;
         has_received_data = true;
+    }
+};
+
+class MetaCallbacks : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& info) override {
+        if (!accept_owner_write(info)) return;
+        std::string val = chr->getValue();
+        size_t len = std::min(val.length(), (size_t)(BLE_BUF_SIZE - 1));
+        memcpy(meta_buf, val.c_str(), len);
+        meta_buf[len] = '\0';
+        meta_ready = true;
+    }
+};
+
+class ArtCallbacks : public NimBLECharacteristicCallbacks {
+    void onWrite(NimBLECharacteristic* chr, NimBLEConnInfo& info) override {
+        if (!art_buf || art_ready || !accept_owner_write(info)) return;
+        std::string val = chr->getValue();
+        if (val.length() < 10) return;
+        const uint8_t* p = (const uint8_t*)val.data();
+        uint16_t id    = p[0] | (p[1] << 8);
+        uint32_t off   = p[2] | (p[3] << 8) | (p[4] << 16) | ((uint32_t)p[5] << 24);
+        uint32_t total = p[6] | (p[7] << 8) | (p[8] << 16) | ((uint32_t)p[9] << 24);
+        uint32_t len   = val.length() - 10;
+        if (off == 0) {                       // a new transfer always restarts reassembly
+            art_rx_id = id;
+            art_rx_total = total;
+            art_rx_got = 0;
+        }
+        if (id != art_rx_id || off != art_rx_got || total != art_rx_total ||
+            total > ART_MAX_BYTES || off + len > total) {
+            art_rx_got = 0;                   // gap or mismatch: wait for the next offset-0 chunk
+            art_rx_total = 0;
+            return;
+        }
+        memcpy(art_buf + off, p + 10, len);
+        art_rx_got += len;
+        if (art_rx_got == art_rx_total) art_ready = true;
     }
 };
 
@@ -309,6 +371,30 @@ void ble_init(void) {
     static ReqCallbacks reqCb;
     req_char->setCallbacks(&reqCb);
 
+    meta_char = svc->createCharacteristic(
+        META_CHAR_UUID,
+        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+    );
+    static MetaCallbacks metaCb;
+    meta_char->setCallbacks(&metaCb);
+
+    cmd_char = svc->createCharacteristic(
+        CMD_CHAR_UUID,
+        NIMBLE_PROPERTY::NOTIFY
+    );
+
+    // Always registered so the GATT table is the same on every board; boards
+    // without PSRAM just never allocate the buffer and drop the chunks.
+    art_char = svc->createCharacteristic(
+        ART_CHAR_UUID,
+        NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR
+    );
+    static ArtCallbacks artCb;
+    art_char->setCallbacks(&artCb);
+#ifdef BOARD_HAS_PSRAM
+    art_buf = (uint8_t*)heap_caps_malloc(ART_MAX_BYTES, MALLOC_CAP_SPIRAM);
+#endif
+
     svc->start();
     server->start();
     start_advertising();
@@ -379,6 +465,36 @@ void ble_request_refresh(void) {
         req_char->notify();
         Serial.println("BLE: refresh requested");
     }
+}
+
+bool ble_has_music(void) {
+    return meta_ready;
+}
+
+const char* ble_get_music(void) {
+    meta_ready = false;
+    return meta_buf;
+}
+
+bool ble_get_art(uint16_t* id, const uint8_t** data, uint32_t* len) {
+    if (!art_ready) return false;
+    *id = art_rx_id;
+    *data = art_buf;
+    *len = art_rx_total;
+    return true;
+}
+
+void ble_art_done(void) {
+    art_rx_got = 0;
+    art_rx_total = 0;
+    art_ready = false;
+}
+
+void ble_send_media_cmd(uint8_t cmd) {
+    if (state != BLE_STATE_CONNECTED || !cmd_char) return;
+    cmd_char->setValue(&cmd, 1);
+    cmd_char->notify();
+    Serial.printf("BLE: media cmd %u\n", cmd);
 }
 
 void ble_keyboard_press(uint8_t key, uint8_t modifier) {
