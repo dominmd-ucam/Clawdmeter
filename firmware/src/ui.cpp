@@ -760,8 +760,8 @@ static void media_btn_cb(lv_event_t* e) {
     }
 }
 
-// Round transport button. Deliberately NOT event-bubbling, and the music
-// container has no tap-to-splash handler: on this screen taps are for control.
+// Round transport button. Deliberately NOT event-bubbling: a tap here must not
+// reach the container's global_click_cb (which toggles the splash).
 static lv_obj_t* make_media_btn(lv_obj_t* parent, int size, bool primary,
                                 const char* glyph, const lv_font_t* font, uint8_t cmd,
                                 lv_obj_t** out_label) {
@@ -800,8 +800,7 @@ static void init_music_screen(lv_obj_t* scr) {
     lv_obj_set_style_border_width(music_container, 0, 0);
     lv_obj_set_style_pad_all(music_container, 0, 0);
     lv_obj_clear_flag(music_container, LV_OBJ_FLAG_SCROLLABLE);
-    // No global_click_cb here: a slightly missed transport button must not
-    // throw the user out to the splash. PWR still cycles pages from here.
+    lv_obj_add_event_cb(music_container, global_click_cb, LV_EVENT_CLICKED, NULL);
 
     // Cover slot — a rounded panel with a note glyph until the cover arrives.
     music_cover = lv_obj_create(music_container);
