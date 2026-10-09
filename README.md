@@ -40,6 +40,9 @@ y se comunica por Bluetooth LE con un pequeño daemon que corre en tu PC.
   gris = sin datos. Sin parpadeos, solo colores.
 - **Porcentaje de batería** junto al icono de la batería.
 - **Hora** visible también en la segunda pantalla.
+- **Pantalla Música**: una tercera página con la canción que suena en el PC (Spotify u otra app),
+  carátula, progreso y botones táctiles para pasar canciones. Ver [Pantalla Música](#3-pantalla-música-añadido-de-este-fork).
+- **Táctil que sigue la rotación** de la pantalla (antes solo acertaba en una orientación).
 - **Instalación simplificada en Windows**: scripts en `scripts/` sin rutas fijas (usan
   `%USERPROFILE%` y `%LOCALAPPDATA%`), así que funcionan igual en cualquier PC y con cualquier usuario.
 - **Carpeta `custom/`** con los parches y los iconos PNG que uso, y cómo cambiarlos.
@@ -117,7 +120,7 @@ Configuración en `%LOCALAPPDATA%\Clawdmeter\config`: `clock` (12/24), `chime` (
 
 ## Qué muestra
 
-La pantalla tiene dos páginas. Pulsa el botón central **PWR** para cambiar entre ellas.
+La pantalla tiene tres páginas. Pulsa el botón central **PWR** para cambiar entre ellas.
 
 ### 1. Pantalla de uso (lo principal)
 
@@ -156,11 +159,44 @@ En el original, el panel de agentes está pensado para una configuración multia
 (busca ventanas de `tmux` con nombre). Si no ejecutas agentes así, los puntos simplemente quedan
 inactivos y el resto funciona igual. Consulta [Personalización](#personalización).
 
+### 3. Pantalla Música (añadido de este fork)
+
+Lo que está sonando en el PC, con controles:
+
+- **Carátula** del álbum, **título** y **artista** (con tildes, ñ y comillas tipográficas)
+- **Barra de progreso** con tiempo transcurrido y duración
+- Botones táctiles **⏮ ⏯ ⏭** que actúan sobre Spotify en el PC
+- «Nada sonando» cuando no hay nada reproduciéndose
+
+<p align="center">
+  <img src="images/music.png" alt="Pantalla Música con título, artista, barra de progreso y botones de reproducción" width="300">
+</p>
+
+**No necesita la API de Spotify ni ninguna clave.** El daemon lee la sesión multimedia de Windows
+(SMTC, la misma que muestran las teclas multimedia), así que también funciona con otras apps que
+la publiquen (navegador, VLC…). Funcionamiento:
+
+- El daemon envía la canción cada 2 s si cambia, y la carátula (JPEG de 200×200, ~8 KB) solo
+  cuando cambia el álbum. Tarda menos de medio segundo.
+- Al pulsar un botón, la placa avisa al daemon y este manda la orden a Spotify. No usa teclas
+  multimedia, así que actúa sobre Spotify aunque haya otra app con sonido.
+- Solo Windows por ahora (el daemon de macOS no envía música).
+
+**Al actualizar desde una versión sin esta pantalla:**
+
+1. `git pull` y vuelve a ejecutar `.\scripts\install.ps1` (instala las dependencias nuevas `winrt-*`).
+2. Flashea el firmware (ver [Flashear el firmware](#flashear-el-firmware)).
+3. **Quita «Clawdmeter» de Bluetooth en Windows y empareja de nuevo, una vez.** El firmware añade
+   servicios Bluetooth nuevos y Windows guarda en caché la lista antigua; sin reemparejar, el log
+   del daemon dice `Board firmware has no music screen; media disabled`.
+
 ### Controles
 
 | Acción | Qué hace |
 | --- | --- |
-| Pulsar **PWR** (botón central) | Cambia de página: Uso ⟷ Estado |
+| Pulsar **PWR** (botón central) | Cambia de página: Uso → Estado → Música |
+| Tocar ⏮ ⏯ ⏭ (en Música) | Canción anterior / play-pausa / siguiente en Spotify |
+| Tocar la pantalla (fuera de los botones) | Muestra u oculta la pantalla de la mascota |
 | Mantener **PWR** ~3 s | Modo de emparejamiento (borra el vínculo Bluetooth) |
 | Botones laterales | Teclas BLE HID que puedes usar dentro de Claude Code (p. ej. pulsar para hablar) |
 
@@ -393,6 +429,9 @@ audio? Sirve cualquier PCM de 12 kHz/16 bits/mono volcado como array de bytes en
 | Sin datos de Claude en pantalla | Problema de token. Busca `HTTP 401` en el log del daemon. Asegúrate de haber iniciado sesión en Claude Code; considera el [ayudante de token caliente](#mantener-el-token-caliente-opcional). |
 | El daemon nunca conecta bajo launchd (macOS) | Necesita su **propio** permiso de Bluetooth. Concede a Python el permiso en Ajustes del Sistema → Privacidad y seguridad → Bluetooth y ejecuta `launchctl kickstart -k gui/$(id -u)/com.user.claude-usage-daemon`. |
 | `install-mac.sh` se cuelga en una shell no interactiva | El paso [5/6] hace un escaneo previo en primer plano. Ejecútalo como `echo n \| ./install-mac.sh` para saltarlo y aun así cargar el agente launchd. |
+| Pantalla Música en «Nada sonando» con Spotify abierto | Busca `Board firmware has no music screen` en el log: reempareja la placa una vez (ver [Pantalla Música](#3-pantalla-música-añadido-de-este-fork)). Si no aparece, comprueba que Spotify está reproduciendo, no solo abierto. |
+| Sale la nota musical en lugar de la carátula | Windows no ha publicado la carátula de esa canción (pasa a veces con Spotify). Suele aparecer en la siguiente. |
+| Los botones de Música hacen cosas raras en una orientación | Reflashea el firmware actual: el táctil sigue la rotación de la pantalla desde la versión con la pantalla Música. |
 | BLE no reconecta tras reflashear | Vínculo obsoleto. Instala `blueutil` (el instalador lo ofrece) para recuperación automática, o «Olvidar este dispositivo» en Bluetooth y empareja de nuevo. |
 
 ---
@@ -410,6 +449,9 @@ compilación apunta a la primera:
 Las funciones de audio (aviso, voz diaria) requieren una placa con códec/altavoz integrado (las S3 de
 2,16" y 1,8").
 
+La pantalla Música funciona en todas, pero la **carátula necesita PSRAM** (placas S3): en las C6 se
+muestra la nota musical en su lugar. Solo está probada en la 2,16" S3.
+
 ---
 
 ## Estructura del repositorio
@@ -421,6 +463,7 @@ firmware/          proyecto PlatformIO (C++ / LVGL 9)
 daemon/            daemon anfitrión macOS/Linux/Windows (Python) + scripts de instalación
   claude_usage_daemon.py          el daemon de macOS (bleak + httpx, envío por BLE)
   claude_usage_daemon_windows.py  el daemon de Windows (con mis personalizaciones)
+  media_windows.py                (mío) lectura de la música de Windows para la pantalla Música
   config.example                  plantilla de configuración del daemon
   token_keepwarm.sh               mantenimiento opcional del token OAuth (launchd)
 scripts/           (mío) instalación y arranque en Windows, sin rutas fijas
