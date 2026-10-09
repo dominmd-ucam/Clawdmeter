@@ -20,6 +20,22 @@ LV_FONT_DECLARE(font_styrene_20);
 LV_FONT_DECLARE(font_styrene_16);
 LV_FONT_DECLARE(font_styrene_14);
 LV_FONT_DECLARE(font_mono_32);
+// Inter subsets with only Latin-1/Latin Extended-A + typographic punctuation —
+// used as fallbacks so song titles with accents render (Styrene is ASCII-only).
+LV_FONT_DECLARE(font_latin_28);
+LV_FONT_DECLARE(font_latin_24);
+LV_FONT_DECLARE(font_latin_20);
+LV_FONT_DECLARE(font_latin_16);
+
+// Runtime copies of Styrene fonts whose `.fallback` points at the matching
+// Inter subset: ASCII keeps the brand face, á/ñ/’… come from Inter.
+static lv_font_t music_font_a, music_font_b;
+static const lv_font_t* with_latin(lv_font_t* copy, const lv_font_t* base,
+                                   const lv_font_t* latin) {
+    *copy = *base;
+    copy->fallback = latin;
+    return copy;
+}
 
 // Layout values computed from the active board's geometry. Populated once
 // in ui_init() and treated as const for the rest of the program. Adding a
@@ -88,8 +104,8 @@ static void compute_layout(const BoardCaps& c) {
         L.music_cover_y     = 30;
         L.music_btn         = 68;
         L.music_btn_play    = 88;
-        L.music_title_font  = &font_styrene_28;
-        L.music_artist_font = &font_styrene_20;
+        L.music_title_font  = with_latin(&music_font_a, &font_styrene_28, &font_latin_28);
+        L.music_artist_font = with_latin(&music_font_b, &font_styrene_20, &font_latin_20);
         L.music_time_font   = &font_styrene_16;
         L.music_icon_font   = &lv_font_montserrat_32;
         L.music_play_font   = &lv_font_montserrat_40;
@@ -111,8 +127,8 @@ static void compute_layout(const BoardCaps& c) {
         L.music_cover_y     = 64;   // below the battery label on the narrower panel
         L.music_btn         = 60;
         L.music_btn_play    = 76;
-        L.music_title_font  = &font_styrene_24;
-        L.music_artist_font = &font_styrene_16;
+        L.music_title_font  = with_latin(&music_font_a, &font_styrene_24, &font_latin_24);
+        L.music_artist_font = with_latin(&music_font_b, &font_styrene_16, &font_latin_16);
         L.music_time_font   = &font_styrene_14;
         L.music_icon_font   = &lv_font_montserrat_32;
         L.music_play_font   = &lv_font_montserrat_32;
@@ -921,7 +937,7 @@ static void draw_music(uint32_t now) {
         music_shown_active = active;
         if (!active) {
             lv_label_set_text(lbl_music_title, "Nada sonando");
-            lv_label_set_text(lbl_music_artist, s_ble_connected ? "Abre Spotify en el PC" : "Sin conexion");
+            lv_label_set_text(lbl_music_artist, s_ble_connected ? "Abre Spotify en el PC" : "Sin conexi\xC3\xB3n");
             lv_label_set_text(lbl_music_pos, "");
             lv_label_set_text(lbl_music_dur, "");
             lv_bar_set_value(bar_music, 0, LV_ANIM_OFF);
